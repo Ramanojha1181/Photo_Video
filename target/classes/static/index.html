@@ -1,0 +1,112 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Camera App</title>
+  <style>
+    body { font-family: system-ui, sans-serif; max-width: 760px; margin: 24px auto; padding: 0 16px; }
+    video#preview { width: 100%; background: #000; border-radius: 8px; }
+    .row { display: flex; gap: 8px; flex-wrap: wrap; margin: 12px 0; }
+    button { padding: 10px 16px; border: 0; border-radius: 6px; cursor: pointer; background: #2563eb; color: #fff; }
+    button:disabled { background: #9ca3af; cursor: not-allowed; }
+    #rec { background: #dc2626; }
+    #status { color: #555; min-height: 1.2em; }
+    #gallery { display: grid; grid-template-columns: repeat(auto-fill, minmax(200px, 1fr)); gap: 10px; }
+    #gallery img, #gallery video { width: 100%; border-radius: 6px; }
+  </style>
+</head>
+<body>
+  <h2>Camera App</h2>
+  <video id="preview" autoplay playsinline muted></video>
+
+  <div class="row">
+    <button id="start">Start Camera</button>
+    <button id="photo" disabled>Take Photo</button>
+    <button id="rec" disabled>Start Recording</button>
+    <button id="stop" disabled>Stop Camera</button>
+  </div>
+  <div id="status"></div>
+
+  <h3>Gallery</h3>
+  <div id="gallery"></div>
+
+<script>
+  const video = document.getElementById('preview');
+  const $ = id => document.getElementById(id);
+  const statusEl = $('status'); 
+  let stream, recorder, chunks = [];
+ 
+  function setStatus(msg) { statusEl.textContent = msg; }
+
+  $('start').onclick = async () => {
+    try {
+      stream = await navigator.mediaDevices.getUserMedia({ video: true, audio: true });
+      video.srcObject = stream;
+      $('start').disabled = true;
+      $('photo').disabled = $('rec').disabled = $('stop').disabled = false;
+      setStatus('Camera on');
+    } catch (e) {
+      setStatus('Camera access failed: ' + e.message + ' (HTTPS ya localhost zaroori hai)');
+    }
+  };
+
+  $('stop').onclick = () => {
+    if (recorder && recorder.state === 'recording') recorder.stop();
+    stream.getTracks().forEach(t => t.stop());
+    video.srcObject = null;
+    $('start').disabled = false;
+    $('photo').disabled = $('rec').disabled = $('stop').disabled = true;
+    $('rec').textContent = 'Start Recording';
+    setStatus('Camera off');
+  };
+
+  $('photo').onclick = () => {
+    const canvas = document.createElement('canvas');
+    canvas.width = video.videoWidth;
+    canvas.height = video.videoHeight;
+    canvas.getContext('2d').drawImage(video, 0, 0);
+    canvas.toBlob(blob => upload('/api/photos', blob, 'photo.png'), 'image/png');
+  };
+
+  $('rec').onclick = () => {
+    if (recorder && recorder.state === 'recording') {
+      recorder.stop();
+      $('rec').textContent = 'Start Recording';
+      return;
+    }
+    chunks = [];
+    recorder = new MediaRecorder(stream);
+    recorder.ondataavailable = e => { if (e.data.size) chunks.push(e.data); };
+    recorder.onstop = () => {
+      const blob = new Blob(chunks, { type: recorder.mimeType });
+      upload('/api/videos', blob, 'video');
+    };
+    recorder.start();
+    $('rec').textContent = 'Stop Recording';
+    setStatus('Recording...');
+  };
+
+  async function upload(url, blob, filename) {
+    const form = new FormData();
+    form.append('file', blob, filename);
+    setStatus('Uploading...');
+    const res = await fetch(url, { method: 'POST', body: form });
+    if (res.ok) { setStatus('Saved on server'); loadGallery(); }
+    else setStatus('Upload failed: ' + res.status);
+  }
+
+  async function loadGallery() {
+    const names = await (await fetch('/api/files')).json();
+    $('gallery').innerHTML = names.map(n => {
+      const u = '/api/files/' + n;
+      return n.endsWith('.png')
+        ? `<img src="${u}" alt="${n}">`
+        : `<video src="${u}" controls></video>`;
+    }).join('');
+  }
+
+  loadGallery();
+</script>
+</body>
+</html>
